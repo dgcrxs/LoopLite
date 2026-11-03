@@ -123,6 +123,49 @@ _COPY_NAMES = {
     "modeling_sensenova_loop.py",
 }
 
+# ---------------------------------------------------------------
+# 分块读取：控制峰值内存
+#
+# 实测基座 lm_head 是 248320×4096 的 FP32 张量，单个就有 4.07GB。
+# 用 f.get_tensor() 整张量读入，在本机 6GB 可用内存上会直接 OOM；
+# 即便靠 swap 撑过去，也会从「几分钟」退化到「几小时」且难察觉。
+# 因此改为 get_slice() 沿第一维分块，峰值 ≈ 输出张量 + 一个 chunk。
+# ---------------------------------------------------------------
+_CHUNK_BYTES = 256 * 1024 * 1024
+
+# safetensors 的 dtype 字符串 → 字节数
+_SL_DTYPE_BYTES = {
+    "F64": 8, "F32": 4, "F16": 2, "BF16": 2,
+    "I64": 8, "I32": 4, "I16": 2, "I8": 1, "U8": 1, "BOOL": 1,
+}
+_FLOAT_ST_DTYPES = {"F64", "F32", "F16", "BF16"}
+
+
+def _read_as(sl, shape: list[int], src_bytes: int, tgt_dtype, chunk_bytes: int = _CHUNK_BYTES):
+    """按第一维分块读取 PySafeSlice 并转换为 tgt_dtype。
+
+    峰值内存 ≈ 目标张量大小 + 一个 chunk，而不是「源张量 + 目标张量」。
+    """
+    import torch
+
+    if not shape:
+        return sl[:].to(tgt_dtype)
+
+    row_bytes = src_bytes
+    for d in shape[1:]:
+        row_bytes *= max(int(d), 1)
+
+    step = max(1, chunk_bytes // max(row_bytes, 1))
+    if step >= shape[0]:
+        # 小张量一次读完更省事
+        return sl[:].to(tgt_dtype)
+
+    out = torch.empty(shape, dtype=tgt_dtype)
+    for s in range(0, shape[0], step):
+        e = min(s + step, shape[0])
+        out[s:e] = sl[s:e].to(tgt_dtype)
+    return out
+
 
 def convert_shards(
     src_dir: str | Path,
@@ -197,19 +240,29 @@ def convert_shards(
         out: dict[str, "torch.Tensor"] = {}
         with safe_open(str(spath), framework="pt", device="cpu") as f:
             for name in f.keys():
-                t = f.get_tensor(name)
-                if t.is_floating_point() and not should_keep_fp32(name, pats):
-                    out[name] = t.to(tgt_dtype)
-                else:
-                    if t.is_floating_point() and should_keep_fp32(name, pats):
-                        out[name] = t.to(torch.float32)
-                        if name not in stats["protected"]:
-                            stats["protected"].append(name)
-                    else:
-                        # 整型张量原样保留
-                        out[name] = t
+                sl = f.get_slice(name)
+                shape = list(sl.get_shape())
+                src_dt = sl.get_dtype()
+                esize = _SL_DTYPE_BYTES.get(src_dt, 4)
+                numel = 1
+                for d in shape:
+                    numel *= d
+                stats["bytes_in"] += numel * esize
                 stats["tensors"] += 1
-                stats["bytes_in"] += t.numel() * t.element_size()
+
+                is_float = src_dt in _FLOAT_ST_DTYPES
+                if not is_float:
+                    # 整型张量（position_ids 之类）都很小，直接整块读
+                    out[name] = f.get_tensor(name)
+                    continue
+
+                keep = should_keep_fp32(name, pats)
+                if keep:
+                    out[name] = _read_as(sl, shape, esize, torch.float32)
+                    if name not in stats["protected"]:
+                        stats["protected"].append(name)
+                else:
+                    out[name] = _read_as(sl, shape, esize, tgt_dtype)
         save_file(out, str(dst / shard), metadata={"format": "pt"})
         stats["shards"] += 1
         stats["bytes_out"] += (dst / shard).stat().st_size

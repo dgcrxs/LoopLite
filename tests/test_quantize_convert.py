@@ -134,3 +134,64 @@ def test_refuse_overwrite(tmp_path):
 def test_estimate_weight_gb():
     assert estimate_weight_gb(9.656, 2) == pytest.approx(17.99, abs=0.1)
     assert estimate_weight_gb(9.656, 4) == pytest.approx(35.98, abs=0.1)
+
+
+def test_chunked_read_matches_whole_tensor(tmp_path):
+    """分块读取必须与整块转换逐元素一致。
+
+    真实基座的 lm_head 是 248320×4096 的 FP32 张量（4.07GB），整块读入会在
+    小内存机器上 OOM，所以走 get_slice() 分块。这条路径若写错，不会报错，
+    只会静默产出错误权重——比崩溃危险得多，必须逐元素比对。
+    """
+    from safetensors import safe_open
+
+    from src.utils.quantize import _read_as
+
+    p = tmp_path / "big.safetensors"
+    t = torch.randn(1024, 64, dtype=torch.float32)
+    save_file({"w": t}, str(p))
+
+    with safe_open(str(p), framework="pt") as f:
+        sl = f.get_slice("w")
+        shape = list(sl.get_shape())
+        # chunk 仅够 8 行（8×64×4B = 2048B）→ 1024 行要切 128 次
+        got = _read_as(sl, shape, 4, torch.bfloat16, chunk_bytes=2048)
+
+    assert got.shape == t.shape
+    assert got.dtype == torch.bfloat16
+    assert torch.equal(got, t.to(torch.bfloat16)), "分块转换结果与整块不一致"
+
+
+def test_chunked_read_3d_tensor(tmp_path):
+    """3D 张量沿第 0 维切片，不能把后两维的 stride 搞错。"""
+    from safetensors import safe_open
+
+    from src.utils.quantize import _read_as
+
+    p = tmp_path / "t3d.safetensors"
+    t = torch.randn(32, 4, 16, dtype=torch.float32)
+    save_file({"w": t}, str(p))
+
+    with safe_open(str(p), framework="pt") as f:
+        sl = f.get_slice("w")
+        got = _read_as(sl, list(sl.get_shape()), 4, torch.float16, chunk_bytes=128)
+
+    assert torch.equal(got, t.to(torch.float16))
+
+
+def test_chunked_read_keeps_fp32_values(tmp_path):
+    """keep-fp32 分支（mHC 参数）分块时也不能丢精度。"""
+    from safetensors import safe_open
+
+    from src.utils.quantize import _read_as
+
+    p = tmp_path / "fp32.safetensors"
+    t = torch.randn(256, 8, dtype=torch.float32)
+    save_file({"w": t}, str(p))
+
+    with safe_open(str(p), framework="pt") as f:
+        sl = f.get_slice("w")
+        got = _read_as(sl, list(sl.get_shape()), 4, torch.float32, chunk_bytes=1024)
+
+    assert got.dtype == torch.float32
+    assert torch.equal(got, t)

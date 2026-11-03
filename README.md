@@ -131,8 +131,17 @@ python -m src.utils.quantize convert \
   --dtype bfloat16
 ```
 
-35.5GB → 17.8GB，逐分片流式转换（峰值内存约 7GB），
-mHC 参数按白名单强制保留 FP32。
+35.5GB → 17.8GB，逐分片流式转换，mHC 参数按白名单强制保留 FP32。
+
+**内存注意**：`lm_head` 单张量 248320×4096 FP32 ≈ 4.07GB，整张量读入在 6GB 可用内存的
+机器上会 OOM。转换器用 `get_slice()` 沿第 0 维分块（chunk 256MB），
+实测峰值约 2.6GB，而不是「源张量 + 目标张量」的 6GB+。
+
+下载还没结束就想挂机转换，用这个（自动等下载完 → 校验 → 转换）：
+
+```bash
+python scripts/auto_convert.py --timeout-min 420
+```
 
 ### 4. 打离线包（代码 + wheel）
 
@@ -204,7 +213,7 @@ sbatch hpc/slurm/submit_tts.sbatch        # TTS
 不依赖 GPU，纯 CPU 即可跑全部单测：
 
 ```bash
-python -m pytest tests/ -q          # 52 个用例
+python -m pytest tests/ -q          # 55 个用例
 python scripts/env_check.py         # 环境与交付物自检
 ```
 
