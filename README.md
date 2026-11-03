@@ -204,7 +204,7 @@ sbatch hpc/slurm/submit_tts.sbatch        # TTS
 不依赖 GPU，纯 CPU 即可跑全部单测：
 
 ```bash
-python -m pytest tests/ -q          # 47 个用例
+python -m pytest tests/ -q          # 52 个用例
 python scripts/env_check.py         # 环境与交付物自检
 ```
 
