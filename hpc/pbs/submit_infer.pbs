@@ -1,0 +1,39 @@
+#!/bin/bash
+# ============================================================
+# PBS / PBS Pro 作业模板（与 hpc/slurm/submit_infer.sbatch 等价）
+#
+# 用法：qsub hpc/pbs/submit_infer.pbs
+# 变量差异：$PBS_JOBID / $PBS_NODEFILE / $PBS_O_WORKDIR
+# ============================================================
+#PBS -N looplite-infer
+#PBS -l select=1:ncpus=16:ngpus=2:mem=256gb
+#PBS -l walltime=02:00:00
+#PBS -o logs/pbs/infer.out
+#PBS -e logs/pbs/infer.err
+# #PBS -q gpu            # ★ 按集群队列名修改
+# #PBS -P YOUR_PROJECT   # ★ 需要时取消注释
+
+set -euo pipefail
+
+echo "JobID: $PBS_JOBID"
+echo "节点: $(cat $PBS_NODEFILE 2>/dev/null | tr '\n' ' ')"
+
+if [ -f hpc/env/modules.env ]; then
+    source hpc/env/modules.env
+fi
+
+cd "$PBS_O_WORKDIR"
+source venv/bin/activate
+
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
+export HF_DATASETS_OFFLINE=1
+export TOKENIZERS_PARALLELISM=false
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+mkdir -p logs/pbs
+
+python -m src.inference.cli dry-run
+python -m src.inference.cli smoke --profile a100_40g --scene office --loop-pass 2 --max-new-tokens 64
+
+echo "结束时间: $(date)"

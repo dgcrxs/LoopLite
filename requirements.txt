@@ -1,0 +1,86 @@
+# LoopLite（灵环）Python 依赖
+#
+# 分环境说明：
+#   requirements.txt        —— 超算/训练机「运行时」依赖（离线打包的目标）
+#   requirements-local.txt  —— 本机（Windows，仅 2G 显存）做下载与打包用的最小依赖
+#   requirements-hpc.lock.txt（由 pack_offline 生成）—— 锁定版本的完整可离线安装清单
+#
+# ======================================================================
+# 版本策略（2026-11 实测核对，别照抄官方页面）
+# ======================================================================
+# 官方验证环境写的是 PyTorch 2.11 + CUDA 13.0 + Transformers 5.18，
+# 但 CUDA 13 要求驱动 ≥580，多数 A100 集群还在 525~570。
+# 实测 transformers 5.18 只要求 torch>=2.5、Python>=3.10，
+# 所以完全可以跑在更老的 CUDA 上，不必为了版本号去换驱动。
+#
+#   CUDA 索引    该索引可用的最高 torch    所需最低驱动
+#   cu118        2.7.1                     450（最宽松）
+#   cu124        2.6.0                     550
+#   cu128        2.11.0                    570 ← 与官方验证环境一致
+#   cu130        2.14.1                    580
+#
+# 默认选 cu124 + torch 2.6.0：兼容面最广，且 transformers 5.18 能正常工作。
+# 驱动 ≥570 时用 --cuda 128 拉 torch 2.11.0，与官方完全对齐。
+# ======================================================================
+
+# ---- 核心框架 ----
+# torch 必须走官方 CUDA 索引（PyPI 上的 torch 是 CPU 版）。
+# 具体版本由 scripts/pack_offline.py 按 --cuda 参数决定，此处只声明下限。
+torch>=2.6.0
+# 钉死 5.18：这是模型官方验证过的版本，自定义 modeling 代码依赖其 config 字段
+# （rope_parameters / mrope / layer_types / attn_output_gate 等）。
+# 5.22 起要求 Python>=3.11，会挡掉 3.10 的集群。
+transformers==5.18.0
+accelerate>=1.12.0
+datasets>=4.4.0
+tokenizers>=0.23.1,<0.24.0     # 与 transformers 5.18 的约束对齐
+safetensors>=0.8.0             # transformers 5.18 要求 ≥0.8
+
+# ---- 权重下载与缓存 ----
+huggingface-hub>=1.2.0
+hf-transfer>=0.1.9
+modelscope>=1.22.0        # 国内镜像备用下载通道
+
+# ---- 微调 ----
+peft>=0.18.0              # LoRA / QLoRA
+trl>=0.26.0               # SFT / DPO Trainer
+deepspeed>=0.17.0         # 多机多卡 ZeRO（可选，A100 40G 全参微调时启用）
+bitsandbytes>=0.49.0      # 4bit/8bit 量化基座（QLoRA 必需）
+flash-attn>=2.8.0         # 可选；A100 上强烈建议装，需源码编译
+
+# ---- 配置与工具 ----
+pyyaml>=6.0.2
+pydantic>=2.11.0
+omegaconf>=2.3.0
+numpy>=2.1.0
+packaging>=24.2
+psutil>=6.1.0
+
+# ---- 服务与接口 ----
+fastapi>=0.119.0
+uvicorn[standard]>=0.37.0
+pydantic-settings>=2.7.0
+
+# ---- 监控（防「退出坍缩」必需）----
+tensorboard>=2.19.0
+# wandb>=0.22.0           # 无外网超算请勿启用，改为离线 tensorboard
+
+# ---- 办公场景 ----
+python-docx>=1.2.0
+openpyxl>=3.1.5
+python-pptx>=1.0.2
+pdfplumber>=0.11.5
+markdown>=3.8
+beautifulsoup4>=4.13.0
+chromadb>=1.0.0           # 长文档 RAG 向量库（可选）
+
+# ---- TTS ----
+soundfile>=0.13.1
+librosa>=0.11.0
+# torchaudio 版本必须与 torch 严格同号（2.6.0 ↔ 2.6.0），由 pack_offline 统一决定
+torchaudio>=2.6.0
+einops>=0.8.1
+vocos>=0.2.1              # Flow-matching 声码器（可选）
+
+# ---- 测试 ----
+pytest>=8.4.0

@@ -1,0 +1,76 @@
+# ============================================================
+# LoopLite（灵环）项目忽略规则
+# 原则：代码/配置进仓库，权重/数据/环境一律不进仓库
+# ============================================================
+
+# ---- 模型权重（整目录隔离）----
+# 实测 checkpoint 35.5GB，且下载中途会产生 .incomplete/.part 等非标准扩展名文件。
+# 这里整目录忽略，比逐个扩展名白名单更安全——权重绝无可能意外入仓。
+# 目录结构由 scripts/download_models.py 与 setup 脚本自动创建，无需 gitkeep。
+models/
+
+# ---- 数据 ----
+data/raw/**
+data/processed/**
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+*.jsonl
+!data/processed/*.jsonl.sample
+
+# ---- 训练产物 ----
+outputs/
+checkpoints/
+runs/
+wandb/
+*.log
+logs/**
+!logs/.gitkeep
+
+# ---- 离线打包产物（本机生成，用于推超算）----
+dist/
+offline_bundle/
+tools/*.whl
+wheels/
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+/.venv/
+/venv/
+# 注意：必须锚定根目录。无前缀的 `env/` 会匹配任意层级的 env 目录，
+# 曾把 hpc/env/（setup_offline.sh、probe.sh、modules.env）整个吃掉。
+/env/
+.env
+*.so
+
+# ---- 工具 ----
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+.ipynb_checkpoints/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ---- 工作区临时目录（探针下载、模型头解析等的落地处）----
+.tmp/
+
+# ---- 工具产生的会话/记忆数据 ----
+.workbuddy/
+
+# ---- 生成产物：由 pack_offline.py 产出，不入仓 ----
+requirements-hpc.lock.txt
+
+# ---- 临时/大文件 ----
+*.tmp
+*.tar
+*.tar.gz
+*.zip
+*.7z
+*.zst
+!scripts/*.sh

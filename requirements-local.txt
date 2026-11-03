@@ -1,0 +1,17 @@
+# 本机（Windows / GTX 950M 2G 显存）准备环境的最小依赖
+#
+# 定位：本机不跑训练、不跑推理，只做三件事——
+#   1) 下载基座权重与数据集
+#   2) 把超算要用的 wheel 全量拉下来打成离线包
+#   3) 静态检查代码（ruff）
+# 因此这里不装 torch / transformers（本机无意义且占用巨大）。
+
+huggingface-hub>=1.2.0     # 权重下载
+hf-transfer>=0.1.9         # 下载加速（需设 HF_HUB_ENABLE_HF_TRANSFER=1）
+modelscope>=1.22.0         # 国内镜像备用下载通道
+pyyaml>=6.0.2
+packaging>=24.2
+psutil>=6.1.0
+requests>=2.32.0
+tqdm>=4.67.0
+ruff>=0.12.0               # 代码静态检查（本机提交前自检）

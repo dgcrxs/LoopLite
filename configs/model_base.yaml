@@ -1,0 +1,140 @@
+# ============================================================
+# 基座模型事实基线（所有其他配置的锚点）
+#
+# 本文件数据于 2026-11-03 直接读取 checkpoint 的 config.json 与
+# safetensors 头部实测得出，不依赖模型卡描述。修改前请先复核。
+# ============================================================
+
+model:
+  repo_id: "sensenova/SenseNova-Loop-9B-Preview"
+  github: "https://github.com/OpenSenseNova/SenseNova-Loop"
+  license: "Apache-2.0"
+  revision: "main"
+
+  # 加载方式：自定义架构，必须开 trust_remote_code
+  # auto_map 至少提供 AutoConfig / AutoModel / AutoModelForCausalLM /
+  # AutoModelForImageTextToText 四个入口（见 modeling_sensenova_loop.py）
+  trust_remote_code: true
+  torch_dtype: "bfloat16"
+
+# ------------------------------------------------------------
+# 架构（实测）
+# ------------------------------------------------------------
+architecture:
+  type: "sensenova_loop"
+  cls: "SenseNovaLoopForConditionalGeneration"
+  # ⚠️ 这是「图文多模态」模型，不是纯文本 LLM
+  modality: ["text", "image", "video"]
+
+  # ---- 循环结构（config.loop_settings）----
+  #   start=4, end=28, counts=[2]
+  #   语义：第 4..27 层（24 层）这组权重在一次前向中被调用 2 次
+  total_stored_layers: 32
+  pre_loop_layers: 4           # 第 0..3 层，独立权重
+  loop_block_layers: 24        # 第 4..27 层，共享权重
+  post_loop_layers: 4          # 第 28..31 层，独立权重
+  default_loop_pass: 2         # counts[0]
+  # => 单次前向的层计算次数 = 4 + 24×2 + 4 = 56
+
+  # ---- 参数量（safetensors 逐张量累加实测）----
+  stored_params_b: 9.656       # 唯一参数总量，871 个张量
+  effective_params_b: 14.6     # 按 56 层等效深度折算的前向口径
+  param_breakdown_b:
+    language_model: 7.940      # 含 embed_tokens 1.017
+    lm_head: 1.017             # 与 embed 不共享（tie_word_embeddings=false）
+    visual: 0.456              # 视觉塔 qwen3_5_vision
+    mtp: 0.244                 # 多 token 预测头（训练用，推理可弃）
+
+  # ---- 文本主干：Qwen3.5-Next 系混合线性注意力 ----
+  text_config:
+    model_type: "qwen3_5_text"
+    hidden: 4096
+    ffn: 12288
+    vocab: 248320
+    num_heads: 16
+    head_dim: 256              # 注意：head_dim≠hidden/heads=256，正好相等
+    kv_heads: 4                # GQA，group=4
+    attn_output_gate: true     # 输出门控，o_proj 实际是双倍宽
+    partial_rotary_factor: 0.25
+    rope_theta: 10000000
+    rope_type: "mrope"         # 多模态 RoPE，mrope_section=[11,11,10]
+    rms_norm_eps: 1e-06
+    # 混合注意力：每 4 层 = 3 层 linear_attention + 1 层 full_attention
+    full_attention_interval: 4
+    linear_num_key_heads: 16
+    linear_num_value_heads: 32
+    linear_key_head_dim: 128
+    linear_value_head_dim: 128
+    linear_conv_kernel_dim: 4  # 线性注意力带短卷积，非纯 elu 核
+    mamba_ssm_dtype: "float32"
+
+  # ---- 视觉塔 ----
+  vision_config:
+    model_type: "qwen3_5_vision"
+    depth: 27
+    hidden: 1152
+    num_heads: 16
+    patch_size: 16
+    spatial_merge_size: 2
+    temporal_patch_size: 2
+
+  # ---- mHC（双随机混合流）----
+  mhc:
+    streams: 2                 # 2×2 残差矩阵，与方案中的 2 流设定一致
+    sinkhorn_iterations: 20    # 双随机归一化的 Sinkhorn 迭代次数
+    start: 4
+    end: 28
+    fixed_identity: false      # 混合矩阵可学习，不是写死的恒等
+    pre_scale: 1.0
+
+  # ---- MTP（多 token 预测）----
+  mtp:
+    num_layers: 1
+    dedicated_embeddings: false
+    file: "mtp.safetensors"    # 单独一个权重文件，推理不需要可删
+
+  context:
+    max_position_embeddings: 262144
+    recommended_serving_len: 131072
+
+# ------------------------------------------------------------
+# 精度与体积（实测，务必以此规划磁盘与显存）
+# ------------------------------------------------------------
+precision:
+  # ⚠️ checkpoint 里 9.413B 参数是 FP32 存的，只有 0.243B 是 BF16。
+  # 因此下载下来是 35.5GB，不是 BF16 的 19GB。必须先转换再训练/推理。
+  checkpoint_dtype: "float32"
+  checkpoint_size_gb: 35.52
+  backbone: "bfloat16"
+
+  # 各精度下的权重体积（含 lm_head 与视觉塔）
+  size_gb_by_dtype:
+    fp32: 35.5
+    bfloat16: 17.8
+    fp8_e4m3: 9.4
+    int8: 9.4
+    int4: 5.0
+
+  # ⚠️ mHC 路由参数官方导出为 FP32。量化/低精度转换时必须白名单保留，
+  # 否则双随机混合矩阵精度崩坏 → 循环信息混淆，表现为长文本突然胡说。
+  keep_fp32_patterns:
+    - "mhc"
+    - "mixer"
+    - "sinkhorn"
+    - "hyper_connection"
+
+# ------------------------------------------------------------
+# 生态现状（决定部署路线，勿按常规模型假设）
+# ------------------------------------------------------------
+ecosystem:
+  gguf: false                  # 无官方 GGUF，llama.cpp 不认 sensenova_loop
+  ollama: false
+  vllm: false                  # 常规版不认自定义架构
+  official_serving:
+    - "LightLLM (tp4)"
+    - "SGLang（指定 PR 分支）"
+  native: "transformers + trust_remote_code"   # 最稳，前期只走这条
+  transformers_min_version: "5.18"
+
+chat:
+  enable_thinking: true

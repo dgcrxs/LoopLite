@@ -1,0 +1,91 @@
+# ============================================================
+# 阶段二 · Agent 场景偏好对齐（DPO）
+# 目标：工具调用准确率 + JSON 格式严格遵守 + 多步推理正确性
+# ============================================================
+
+experiment:
+  name: "looplite-agent-dpo"
+  output_dir: "models/loras/agent_lora"
+  seed: 42
+
+model:
+  # DPO 从 SFT 之后继续；若无 Agent-SFT 权重，先用 office LoRA 之外的独立 SFT
+  base: "sensenova/SenseNova-Loop-9B-Preview"
+  local_path: "models/base_weights/SenseNova-Loop-9B-Preview"
+  trust_remote_code: true
+  torch_dtype: "bfloat16"
+  sft_adapter: null              # 有则填 models/loras/agent_sft
+
+data:
+  train_file: "data/processed/agent_dpo.jsonl"
+  # 每行一个偏好对：
+  # {
+  #   "prompt": "<系统提示 + 工具定义 + 用户指令>",
+  #   "chosen":  "{\"tool\": \"query_excel\", \"args\": {...}}",   # 正确调用
+  #   "rejected":"我认为应该先看看表格内容……"                      # 空话/错格式
+  # }
+  format: "dpo"
+  max_seq_len: 8192
+  max_prompt_len: 4096
+  num_proc: 16
+
+  # 偏好对构造要点（写进 data/scripts/format_agent.py 的注释里）：
+  #   - chosen 必须是可解析的合法 JSON，且工具名在注册表内
+  #   - rejected 优先取「格式错误 / 参数幻觉 / 未调用工具直接编答案」三类
+  #   - 不要拿「长度差异」当偏好信号，模型会学会啰嗦
+
+lora:
+  enabled: true
+  r: 32                          # DPO 用更小秩，避免把 SFT 能力冲掉
+  alpha: 64
+  dropout: 0.05
+  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+  exclude_patterns: ["mhc", "hyper_connection", "route", "sinkhorn"]
+
+quantization:
+  mode: "qlora"
+  load_in_4bit: true
+  bnb_4bit_quant_type: "nf4"
+  bnb_4bit_compute_dtype: "bfloat16"
+  bnb_4bit_use_double_quant: true
+
+training:
+  # DPO 超参：beta 是最关键的旋钮
+  beta: 0.1                      # 0.1~0.3；太小偏离参考模型太远，太大学不动
+  loss_type: "sigmoid"           # sigmoid | hinge | ipo
+  num_train_epochs: 1            # DPO 极易过拟合，1 轮起步
+  per_device_train_batch_size: 2
+  gradient_accumulation_steps: 8
+  learning_rate: 5.0e-6          # 比 SFT 低一个数量级
+  lr_scheduler_type: "cosine"
+  warmup_ratio: 0.1
+  bf16: true
+  logging_steps: 10
+  save_steps: 100
+  save_total_limit: 2
+  report_to: ["tensorboard"]
+
+  gradient_checkpointing: true
+  gradient_checkpointing_kwargs:
+    use_reentrant: false
+
+  # DPO 需要跑参考模型，显存翻倍 → 40G 卡上必须 QLoRA + 共享基座
+  precompute_ref_log_probs: false
+  ref_model_mixed_precision: true
+
+loop_control:
+  train_loop_pass: 1             # Agent 场景控延迟，训练时也用 1 pass，训推一致
+  min_expected_exit_step: 1.0
+  exit_regularization_weight: 0.01
+
+eval:
+  # 工具调用准确率是唯一硬指标，不看 loss
+  tool_call_accuracy: true
+  json_parse_rate: true
+  eval_steps: 100
+  # 每轮 eval 打一份「格式合格率」，掉头就停
+  early_stop_on_json_rate_below: 0.90
+
+hardware:
+  min_gpu_mem_gb: 40
+  strategy: "single_gpu_qlora"

@@ -1,0 +1,35 @@
+# ============================================================
+# 换行符统一为 LF
+#
+# 本机是 Windows，超算是 Linux。若 .sh / .sbatch 被检出成 CRLF，
+# 在 Linux 上执行会报 `\r: command not found` 或 `bad interpreter`，
+# 而且报错信息完全看不出是换行符问题——最典型的隐形坑之一。
+#
+# 这里强制所有文本文件在仓库内与检出后均为 LF。
+# ============================================================
+
+* text=auto eol=lf
+
+# 明确声明需要 LF 的可执行脚本（双保险）
+*.sh      text eol=lf
+*.sbatch  text eol=lf
+*.pbs     text eol=lf
+*.lsf     text eol=lf
+*.env     text eol=lf
+
+# Windows 批处理反过来必须 CRLF
+*.bat     text eol=crlf
+*.cmd     text eol=crlf
+
+# 二进制，禁止任何换行符处理
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.ico     binary
+*.pdf     binary
+*.gz      binary
+*.zip     binary
+*.whl     binary
+*.safetensors binary
+*.gguf    binary

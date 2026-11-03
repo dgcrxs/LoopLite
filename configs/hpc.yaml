@@ -1,0 +1,62 @@
+# ============================================================
+# 超算集群配置 —— 换集群只改这一个文件
+# 敏感信息（账号/密钥）不入库，用环境变量或 ~/.ssh/config 提供
+# ============================================================
+
+cluster:
+  name: "HPC-A100"
+  # 调度系统：slurm | pbs | lsf
+  scheduler: "slurm"              # ★ 待确认；作业脚本三个版本都已备好
+  # 登录与传输
+  host: "${HPC_HOST}"             # 例：hpc.example.edu.cn
+  user: "${HPC_USER}"
+  port: 22
+  # 如需跳板机，取消注释并在 ~/.ssh/config 配好 ProxyJump
+  # proxy_jump: "bastion"
+
+  remote_workdir: "${HPC_WORKDIR}"   # 例：/vol/home/user/LoopLite
+  # 超算上的高速并行存储（放权重与数据；$HOME 通常配额小且慢）
+  remote_datadir: "${HPC_DATADIR}"
+
+  # ⚠️ 完全无外网：所有依赖靠本机打包推送，勿在作业脚本里写 pip install
+  offline: true
+
+resource:
+  gpu_type: "A100"
+  gpu_mem_gb: 40
+  # 按需调整；8 卡为官方微调示例规模
+  gpus_per_node: 8
+  default_gpus: 2
+  cpu_per_task: 16
+  mem_per_node: "256G"
+  partition: "gpu"                # Slurm 分区名，按集群实际改
+  qos: "normal"
+  # 墙上时间上限（分钟），超算通常有硬限制
+  max_walltime_min: 1440
+
+  # 模块系统：超算用 module 管理 CUDA，按实际填
+  modules:
+    - "cuda/12.4"                 # ★ 待确认：官方要 CUDA 13.0，A100 常见 11.8/12.x
+    - "gcc/11.3.0"
+  # 若集群不用 module（如自带容器环境），置空即可
+
+env:
+  # 离线必备
+  HF_HUB_OFFLINE: "1"
+  TRANSFORMERS_OFFLINE: "1"
+  HF_DATASETS_OFFLINE: "1"
+  # 多卡通信
+  NCCL_DEBUG: "WARN"
+  NCCL_IB_DISABLE: "0"
+  # 显存碎片
+  PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+  # 线程
+  OMP_NUM_THREADS: "16"
+  TOKENIZERS_PARALLELISM: "false"
+
+sync:
+  # scp 直连；大文件建议先打包再传（单文件 20GB 的 scp 断点难续）
+  method: "scp"
+  archive_before_transfer: true
+  ssh_options: "-o StrictHostKeyChecking=accept-new -o ServerAliveInterval=60"
+  bandwidth_limit_kbps: 0         # 0 = 不限；窄带宽时设值避免占满

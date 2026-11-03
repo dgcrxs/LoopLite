@@ -1,0 +1,76 @@
+[build-system]
+requires = ["setuptools>=80.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "looplite"
+version = "0.1.0"
+description = "LoopLite 灵环 - 基于 Looped Transformer 的本地化私有 AI 引擎"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Yua" }]
+
+# 注意：torch / transformers 故意不列为硬依赖。
+# 本机 Windows（2G 显存）只装 requirements-local.txt；
+# 超算端由 hpc/env/setup_offline.sh 用离线 wheel 安装。
+dependencies = [
+    "pyyaml>=6.0.2",
+    "numpy>=2.1.0",
+    "psutil>=6.1.0",
+    "packaging>=24.2",
+]
+
+[project.optional-dependencies]
+train = [
+    "transformers>=5.18.0",
+    "peft>=0.18.0",
+    "trl>=0.26.0",
+    "accelerate>=1.12.0",
+    "deepspeed>=0.17.0",
+    "bitsandbytes>=0.49.0",
+]
+serve = [
+    "fastapi>=0.119.0",
+    "uvicorn[standard]>=0.37.0",
+]
+office = [
+    "python-docx>=1.2.0",
+    "openpyxl>=3.1.5",
+    "python-pptx>=1.0.2",
+    "pdfplumber>=0.11.5",
+]
+tts = [
+    "soundfile>=0.13.1",
+    "torchaudio>=2.11.0",
+    "librosa>=0.11.0",
+    "einops>=0.8.1",
+]
+dev = [
+    "pytest>=8.4.0",
+    "ruff>=0.12.0",
+]
+
+[project.scripts]
+looplite-check = "scripts.env_check:main"
+looplite-infer = "src.inference.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["src*", "scripts*"]
+
+[tool.setuptools.package-dir]
+"src" = "src"
+"scripts" = "scripts"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+exclude = [".venv", "models", "data", "dist", "offline_bundle"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

@@ -1,0 +1,41 @@
+#!/bin/bash
+# ============================================================
+# LSF 作业模板（与 hpc/slurm/submit_infer.sbatch 等价）
+#
+# 用法：bsub < hpc/lsf/submit_infer.lsf
+# 注意：LSF 通过标准输入读取 #BSUB 指令，不是直接执行脚本
+# ============================================================
+#BSUB -J looplite-infer
+#BSUB -n 16
+#BSUB -gpu "num=2:mode=exclusive_process"
+#BSUB -R "rusage[mem=256G]"
+#BSUB -W 2:00
+#BSUB -o logs/lsf/infer-%J.out
+#BSUB -e logs/lsf/infer-%J.err
+# #BSUB -q gpu            # ★ 按集群队列名修改
+# #BSUB -P YOUR_PROJECT   # ★ 需要时取消注释
+
+set -euo pipefail
+
+echo "JobID: $LSB_JOBID"
+echo "节点: $LSB_HOSTS"
+
+if [ -f hpc/env/modules.env ]; then
+    source hpc/env/modules.env
+fi
+
+cd "${LS_SUBCWD:-$PWD}"
+source venv/bin/activate
+
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
+export HF_DATASETS_OFFLINE=1
+export TOKENIZERS_PARALLELISM=false
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+mkdir -p logs/lsf
+
+python -m src.inference.cli dry-run
+python -m src.inference.cli smoke --profile a100_40g --scene office --loop-pass 2 --max-new-tokens 64
+
+echo "结束时间: $(date)"

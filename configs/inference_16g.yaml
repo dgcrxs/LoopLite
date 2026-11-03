@@ -1,0 +1,90 @@
+# ============================================================
+# 推理配置：按显存自动选档
+# 档位由 src/utils/hardware.py 探测显存后自动匹配，也可 --profile 强制指定
+# ============================================================
+
+# ⚠️ 注意：不要用 `defaults:` 作为普通配置段名 —— 那是「引用其他配置」的保留字
+generation:
+  max_new_tokens: 1024
+  temperature: 0.7
+  top_p: 0.9
+  # 循环次数：Looped 架构的核心超参。
+  # 官方权重是「跑 2 遍」训出来的，改 1 会掉点，改 3+ 属于外推，需实测。
+  loop_pass: 2
+  trust_remote_code: true
+  attn_implementation: "flash_attention_2"   # A100 上建议；不可用时自动降级 sdpa
+
+# ---- 档位表：key 为「单卡显存下限(GB)」 ----
+profiles:
+
+  # 本机（GTX 950M 2G）：跑不动推理，仅用于配置自检
+  debug_2g:
+    enabled: false
+    note: "本机 2G 显存仅做结构与配置自检，禁止实际加载权重"
+    device: "cpu"
+    dtype: "float32"
+    max_new_tokens: 8
+
+  # 消费级 16G（RTX 4060 Ti 16G / 4080）——原方案的目标档
+  consumer_16g:
+    device: "cuda"
+    dtype: "bfloat16"
+    tensor_parallel: 1
+    gpu_memory_utilization: 0.90
+    max_context: 16384
+    enable_prefix_cache: true
+    # 16G 装 BF16 权重(~20GB)不够，需下列之一：
+    #   a) 权重 FP8 存储（~10GB）——A100/Ada 可用，注意 mHC 路由参数仍保 FP32
+    #   b) cpu_offload：把不活跃层卸到内存，速度慢但能跑
+    strategy: "fp8_weight_or_offload"
+    cpu_offload_fallback: true
+
+  # ★ 超算目标档：A100 40G
+  a100_40g:
+    device: "cuda"
+    dtype: "bfloat16"
+    tensor_parallel: 2            # 20GB 权重 + KV cache，tp2 最稳
+    max_context: 32768
+    gpu_memory_utilization: 0.85
+    enable_prefix_cache: true
+    strategy: "bf16_tp2"
+
+  # A100 80G / H 系列
+  a100_80g:
+    device: "cuda"
+    dtype: "bfloat16"
+    tensor_parallel: 1
+    max_context: 131072
+    gpu_memory_utilization: 0.90
+    enable_prefix_cache: true
+    strategy: "bf16_single"
+
+# ---- 场景覆盖：按 app 覆写 ----
+scene_overrides:
+
+  office:
+    # 办公：吃长上下文，循环次数拉满换理解力
+    loop_pass: 2
+    max_context: 32768
+    temperature: 0.4              # 要稳定、少幻觉
+    lora: "models/loras/office_lora"
+
+  agent:
+    # Agent：循环增加单次 FLOPs，必须控延迟 → 硬限制 pass
+    loop_pass: 1                  # 用 1 pass 换响应速度，实测后再决定是否放回 2
+    max_context: 16384
+    temperature: 0.2
+    max_new_tokens: 512
+    enforce_json: true
+    lora: "models/loras/agent_lora"
+
+  tts:
+    # TTS 不走本引擎，独立小模型，见 configs/tts_flowmatch.yaml
+    loop_pass: 2
+
+# ---- 防「退出坍缩」的推理侧观测 ----
+exit_monitoring:
+  enabled: true
+  log_every_n_steps: 1
+  # 若平均退出步数骤降，说明模型在偷懒跳过循环（多见于自训权重）
+  alert_if_expected_exit_step_below: 1.2

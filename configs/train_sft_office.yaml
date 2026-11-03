@@ -1,0 +1,89 @@
+# ============================================================
+# 阶段二 · 办公场景 SFT
+# 目标：长文档摘要 / 会议纪要 / Excel 分析 / PPT 大纲 → 结构化输出
+# ============================================================
+
+experiment:
+  name: "looplite-office-sft"
+  output_dir: "models/loras/office_lora"
+  seed: 42
+
+model:
+  base: "sensenova/SenseNova-Loop-9B-Preview"
+  local_path: "models/base_weights/SenseNova-Loop-9B-Preview"
+  trust_remote_code: true
+  torch_dtype: "bfloat16"
+  attn_implementation: "flash_attention_2"
+
+data:
+  train_file: "data/processed/office_sft.jsonl"
+  # 格式约定（每行一个样本）：
+  # {"instruction": "...", "input": "<长文本>", "output": "<结构化结果>", "meta": {...}}
+  format: "alpaca"
+  max_seq_len: 16384             # 办公场景吃长上下文；40G 卡上 16K 是安全线
+  packing: false                 # 长文档别开 packing，会跨样本污染
+  num_proc: 16
+  # 长文本优先：短样本在办公场景价值低
+  min_input_chars: 2000
+
+lora:
+  enabled: true
+  r: 64
+  alpha: 128
+  dropout: 0.05
+  bias: "none"
+  target_modules:
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+    - "gate_proj"
+    - "up_proj"
+    - "down_proj"
+  # ⚠️ 循环架构关键：中间 24 层是共享权重的一层，
+  # target_modules 打到它即作用于全部 2 遍循环，不要重复指定。
+  # mHC 路由参数默认不训练（保 FP32 稳定性），如需训练见 monitor 防坍缩说明。
+  exclude_patterns: ["mhc", "hyper_connection", "route", "sinkhorn"]
+
+quantization:
+  # A100 40G 双策略，二选一
+  mode: "qlora"                  # qlora(单卡40G) | full(8卡 ZeRO-3)
+  load_in_4bit: true             # mode=qlora 时生效
+  bnb_4bit_quant_type: "nf4"
+  bnb_4bit_compute_dtype: "bfloat16"
+  bnb_4bit_use_double_quant: true
+
+training:
+  num_train_epochs: 3
+  per_device_train_batch_size: 1       # 16K 长序列，batch 只能为 1
+  gradient_accumulation_steps: 16
+  learning_rate: 1.0e-4
+  lr_scheduler_type: "cosine"
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  max_grad_norm: 1.0
+  bf16: true
+  logging_steps: 10
+  save_steps: 200
+  save_total_limit: 3
+  report_to: ["tensorboard"]     # 无外网，禁用 wandb
+
+  # ⚠️ 循环架构 OOM 头号对策：BPTT 沿时间展开，激活翻倍
+  gradient_checkpointing: true
+  gradient_checkpointing_kwargs:
+    use_reentrant: false
+
+  optim: "adamw_torch_fused"
+  group_by_length: true          # 长文档分桶，减少 padding 浪费
+
+loop_control:
+  # 训练时的循环遍数。与推理保持一致(2)，否则训推不一致
+  train_loop_pass: 2
+  # 防「退出坍缩」：强制模型使用循环深度
+  min_expected_exit_step: 1.5
+  exit_regularization_weight: 0.01
+
+hardware:
+  # 见 configs/hpc.yaml；此处仅声明需求
+  min_gpu_mem_gb: 40
+  strategy: "single_gpu_qlora"

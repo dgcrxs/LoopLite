@@ -1,0 +1,66 @@
+# ============================================================
+# 阶段三 · 轻量 TTS（Flow-matching）
+# 设计：不复用 LLM 的循环层，单独设计「9 个块 × 各循环 2 次」
+# ============================================================
+
+model:
+  name: "looplite-tts"
+  # 循环布局：9 个物理块，每块推理时跑 2 遍 → 等效 18 层深度
+  # 这是把 LLM 侧的「参数共享换深度」思路平移到声学模型
+  num_blocks: 9
+  loop_pass_per_block: 2
+  hidden_dim: 512
+  num_heads: 8
+  ffn_dim: 2048
+  dropout: 0.1
+
+  # 参数量对比基准：同音质传统非循环模型约需 16 块 → 本设计省约 47%
+  param_reduction_target: 0.47
+
+  condition:
+    # 音色条件：参考音频 → speaker embedding
+    speaker_embedding_dim: 192
+    use_reference_audio: true
+    sample_rate: 24000
+    n_mels: 100
+    hop_length: 256
+
+flow_matching:
+  method: "conditional_flow_matching"   # CFM / rectified flow
+  sigma_min: 1.0e-4
+  # 采样步数：音质 vs 延迟的唯一旋钮
+  inference_steps:
+    realtime: 4          # 实时对话：4-step 极速版
+    balanced: 16         # 日常播报
+    audiobook: 64        # 有声书：慢但最自然
+  default: "balanced"
+  solver: "euler"        # euler | midpoint(步数少时更稳)
+  # 4-step 场景强烈建议 midpoint，欧拉法在少步数下音质掉得厉害
+
+vocoder:
+  type: "vocos"          # 或 hifigan
+  pretrained: true       # 声码器直接用预训练，不自训
+  sample_rate: 24000
+
+training:
+  data_dir: "data/processed/tts_audio_text"
+  # 格式：wavs/ + metadata.csv (audio_path|text|speaker)
+  batch_size: 16
+  learning_rate: 1.0e-4
+  num_epochs: 100
+  bf16: true
+  gradient_checkpointing: true
+  log_every: 100
+  save_every: 5000
+  output_dir: "models/tts_weights"
+
+quantization:
+  # 部署时 INT8；注意声学模型对量化比 LLM 敏感，做 AB 听测再定
+  export_int8: true
+  calibrate_samples: 256
+
+serving:
+  # 流式：LLM 边出字边合成，不做整句等待
+  stream_chunk_chars: 24
+  max_concurrent: 4
+  device: "cuda"
