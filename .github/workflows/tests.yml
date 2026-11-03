@@ -1,0 +1,77 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# 同一分支的新提交取消上一轮，省额度
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: pytest (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 是超算侧的基线版本；3.13 对齐本机开发环境
+        python-version: ["3.11", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 配置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-local.txt
+
+      - name: 安装 CPU 版 torch
+        # 关键：必须走 PyTorch 官方 cpu 索引。
+        # PyPI 上的 Linux torch 会把 nvidia-* 约 2GB+ 依赖一起拖下来，
+        # 而本仓库的测试全是 CPU 逻辑，不需要 CUDA。
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+      - name: 安装测试依赖
+        run: |
+          pip install numpy pyyaml psutil pytest safetensors
+
+      - name: 运行测试
+        run: pytest tests/ -v --tb=short
+
+      - name: 检查 shell 脚本语法
+        # 超算是 Linux，脚本语法错误必须在这里暴露，而不是等到提交作业时
+        run: |
+          fail=0
+          for f in $(find . -name "*.sh" -not -path "./.git/*"); do
+            if ! bash -n "$f"; then
+              echo "::error file=$f::bash 语法错误"
+              fail=1
+            fi
+          done
+          exit $fail
+
+      - name: 校验配置文件可解析
+        run: |
+          python - <<'PY'
+          import pathlib, yaml, sys
+          bad = []
+          for p in sorted(pathlib.Path("configs").glob("*.yaml")):
+              try:
+                  yaml.safe_load(p.read_text(encoding="utf-8"))
+                  print(f"  OK  {p}")
+              except Exception as e:
+                  bad.append((p, e))
+                  print(f"  FAIL {p}: {e}")
+          sys.exit(1 if bad else 0)
+          PY

@@ -1,5 +1,9 @@
 # 🌀 LoopLite（灵环）
 
+[![tests](https://github.com/dgcrxs/LoopLite/actions/workflows/tests.yml/badge.svg)](https://github.com/dgcrxs/LoopLite/actions/workflows/tests.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.13-blue.svg)](pyproject.toml)
+
 > 循环生智，轻量无界 · Loop to Infinity, Lite for All
 
 基于 **Looped Transformer（循环架构）** 的私有 AI 引擎。以「计算深度换参数规模」，
