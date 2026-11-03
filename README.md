@@ -1,6 +1,5 @@
 # 🌀 LoopLite（灵环）
 
-[![tests](https://github.com/dgcrxs/LoopLite/actions/workflows/tests.yml/badge.svg)](https://github.com/dgcrxs/LoopLite/actions/workflows/tests.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.13-blue.svg)](pyproject.toml)
 
@@ -200,6 +199,25 @@ sbatch hpc/slurm/submit_tts.sbatch        # TTS
 
 ---
 
-## 八、许可证
+## 八、本地验证
+
+不依赖 GPU，纯 CPU 即可跑全部单测：
+
+```bash
+python -m pytest tests/ -q          # 47 个用例
+python scripts/env_check.py         # 环境与交付物自检
+```
+
+`.github/workflows/tests.yml` 已配置 CI（py3.11 / py3.13 双版本 + bash 语法 + YAML 校验）。
+⚠️ 当前账号因账单问题被锁，Actions 无法启动作业，推上去的运行会直接失败且日志为空
+（`The job was not started because your account is locked due to a billing issue`）。
+账单恢复后无需任何改动，推送即自动运行——本地 `pytest` 结果与它一致。
+
+> CI 里有两项容易被忽略的检查值得保留：`bash -n` 扫全部 `.sh`（超算是 Linux，
+> 语法错误要在这里暴露而不是提交作业时），以及 `configs/*.yaml` 的可解析性。
+
+---
+
+## 九、许可证
 
 Apache 2.0（与基座一致）。基座权重同样为 Apache 2.0。
